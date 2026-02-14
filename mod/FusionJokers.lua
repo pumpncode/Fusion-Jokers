@@ -70,20 +70,16 @@ FusionJokers.fusions = {
 FusionJokers.fusionconfig = SMODS.current_mod.config
 SMODS.load_file('configui.lua')()
 
+FusionJokers.fusions.ingredience = {}
+
 for _, fusion in ipairs(FusionJokers.fusions) do
     local fused = fusion.result_joker
 
     for _, component in ipairs(fusion.jokers) do
         local component_name = component.name
 
-        SMODS.Joker:take_ownership(component_name, {
-            in_pool = function(self, args)
-                if #SMODS.find_card('j_showman') > 0 then return true end -- Allow finding copies if Showman is present
-				if not FusionJokers.fusionconfig.block_components then return true end --If the option is disabled, don't do the check
-                if #SMODS.find_card(fused) > 0 then return false end -- If the fused Joker exists, remove both components
-                return true
-            end
-        }, true) -- silent | suppresses mod badge
+		FusionJokers.fusions.ingredience[component_name] = FusionJokers.fusions.ingredience[component_name] or {}
+		FusionJokers.fusions.ingredience[component_name][fused] = true
     end
 end
 
@@ -106,29 +102,79 @@ SMODS.Joker.inject =function(self)
   SMODS_Joker_inject(self)
 end
 
-function FusionJokers.fusions:add_fusion(joker1, carry_stat1, extra1, joker2, carry_stat2, extra2, result_joker, cost, merged_stat, merge_stat1, merge_stat2, merge_extra)
+function FusionJokers.fusions:register_fusion(t)
+	if type(t) ~= "table" then
+		sendErrorMessage("Invalid format for register_fusion; should be table, got "..type(t), "Fusion Jokers")
+		return
+	end
+	local jokers
+	if t.jokers then jokers = t.jokers
+	else
+		local i = 1
+		jokers = {}
+		while t["joker"..i] do
+			jokers[i] = {
+				name = t["joker"..i],
+				carry_stat = t["carry_stat"..i],
+				merge_stat = t["merge_stat"..i]
+			}
+			i = i+1
+		end
+	end
+
+	for i,v in ipairs(jokers) do
+		FusionJokers.fusions.ingredience[v.name] = FusionJokers.fusions.ingredience[v.name] or {}
+		FusionJokers.fusions.ingredience[v.name][t.result_joker] = true
+	end
+
+	table.insert(self,
+	{
+		jokers = jokers,
+		result_joker = t.result_joker,
+		cost = t.cost,
+		merged_stat = t.merged_stat,
+		requirement = t.requirement,
+		aftermath = t.aftermath,
+	})
+end
+
+function FusionJokers.fusions:add_fusion(joker1, carry_stat1, extra1, joker2, carry_stat2, extra2, result_joker, cost, merged_stat, merge_stat1, merge_stat2)
 	if type(joker1) == "table" then
 		sendWarnMessage("add_fusion expects a list of parameters, not a table; passing table to register_fusion", "Fusion Jokers")
 		FusionJokers.fusions:register_fusion(joker1)
-	else table.insert(self,
-		{ jokers = {
-			{ name = joker1, carry_stat = carry_stat1, extra_stat = extra1, merge_stat = merge_stat1 },
-			{ name = joker2, carry_stat = carry_stat2, extra_stat = extra2, merge_stat = merge_stat2 }
-		}, result_joker = result_joker, cost = cost, merged_stat = merged_stat, merge_extra = merge_extra })
+	else
+		sendWarnMessage("add_fusion is now deprecated, please switch to register_fusion at earliest convenience", "Fusion Jokers")
+	
+		self:register_fusion{
+			jokers = {
+				{name = joker1, carry_stat = carry_stat1, merge_stat = merge_stat1 },
+				{name = joker2, carry_stat = carry_stat2, merge_stat = merge_stat2 },
+			},
+			merged_stat = merged_stat,
+			result_joker = result_joker,
+			cost = cost,
+		}
 	end
 end
 
-function FusionJokers.fusions:register_fusion(t)
-	if type(t) ~= "table" then
-		sendErrorMessage("Use add_fusion if you're passing a list of parameters; register_fusion needs a table", "Fusion Jokers")
-		return
+local atpref = SMODS.add_to_pool
+SMODS.add_to_pool = function (prototype_obj, args)
+	if SMODS.showman(prototype_obj.key) then return true end
+	args = args or {}
+	if FusionJokers.fusionconfig.block_components and FusionJokers.fusions.ingredience[prototype_obj.key] then
+		local flags1,flags2
+		if type(prototype_obj.in_pool) == "function" then
+			_,flags1 = prototype_obj:in_pool(args)
+		end
+		for k,v in pairs(FusionJokers.fusions.ingredience[prototype_obj.key]) do
+			if type(G.P_CENTERS[k].in_pool) == "function" then	
+				_,flags2 = G.P_CENTERS[k]:in_pool(args)
+			end
+			if not ((flags1 or {}).allow_duplicates or (flags2 or {}).allow_returning_components) and next(SMODS.find_card(k)) then return false end
+		end
 	end
-	local joker1, carry_stat1, extra1, joker2, carry_stat2, extra2, result_joker, cost, merged_stat, merge_stat1, merge_stat2, merge_extra = t.joker1, t.carry_stat1, t.extra1, t.joker2, t.carry_stat2, t.extra2, t.result_joker, t.cost, t.merged_stat, t.merge_stat1, t.merge_stat2, t.merge_extra
-	table.insert(self,
-		{ jokers = {
-			{ name = joker1, carry_stat = carry_stat1, extra_stat = extra1, merge_stat = merge_stat1 },
-			{ name = joker2, carry_stat = carry_stat2, extra_stat = extra2, merge_stat = merge_stat2 }
-		}, result_joker = result_joker, cost = cost, merged_stat = merged_stat, merge_extra = merge_extra })
+
+	return atpref(prototype_obj, args)
 end
 
 SMODS.load_file('jokers/diamondbard.lua')()
@@ -150,6 +196,7 @@ SMODS.load_file('jokers/flagbearer.lua')()
 SMODS.load_file('jokers/uncannyface.lua')()
 SMODS.load_file('jokers/commercialdriver.lua')()
 SMODS.load_file('jokers/campingtrip.lua')()
+SMODS.load_file('jokers/test.lua')()
 
 to_number = to_number or function(num)
 	return num
@@ -213,13 +260,21 @@ function Card:can_fuse_card(juicing)
 	end
   	return false
 	--]]
+
+	if self.area ~= G.jokers then return false end --Figure out fusing from other areas later; for now just disable it
+
 	local fusion = self:get_card_fusion()
 	if fusion.cost == "??" then return false, fusion end
 	if fusion.blocked and not juicing then return false, fusion end
-	return (to_big(fusion.cost) + to_big(G.GAME.bankrupt_at or 0)) <= to_big(G.GAME.dollars), fusion
+	local reqcheck = true
+	if type(fusion.requirement) == "function" then
+		reqcheck = fusion.requirement()
+	end
+	return reqcheck and (to_big(fusion.cost) + to_big(G.GAME.bankrupt_at or 0)) <= to_big(G.GAME.dollars), fusion
 end
 
 function Card:get_card_fusion(debug)
+	debug = debug or G.fusion_debug_flag --Set this with DebugPlus if you want to
 	local dprint = function(msg)
 		if debug then print(msg) end
 	end
@@ -237,7 +292,7 @@ function Card:get_card_fusion(debug)
 	local result = {
 		result_joker = "No fusions",
 		jokers = {
-			{name = self.config.center_key, extra_stat = false}
+			{name = self.config.center_key }
 		},
 		cost = "??"
 	}
@@ -247,8 +302,8 @@ function Card:get_card_fusion(debug)
 		for _, joker in ipairs(fusion.jokers) do
 			if joker.name == self.config.center_key then
 				result.result_joker = "Cannot fuse"
+				local recipe = {}
 				for i,component in ipairs(fusion.jokers) do
-					local recipe = {}
 					recipe[component.name] = (recipe[component.name] or 0) + 1
 					dprint(component.name.."s needed: "..tostring(recipe[component.name]))
 					dprint(component.name.."s found: "..tostring(#SMODS.find_card(component.name)))
@@ -322,8 +377,8 @@ function Card:get_card_fusion(debug)
     return result
 end
 
-
 function Card:fuse_card(debug)
+	debug = debug or G.fusion_debug_flag --Set this with DebugPlus if you want to
 	local dprint = function(msg)
 		if debug then print(msg) end
 	end
@@ -344,26 +399,62 @@ function Card:fuse_card(debug)
 
 
 	local chosen_fusion = self:get_card_fusion()
-	local joker_pos = {}
+	local carried_stats = {}
+	local merged_stat = 0
+	local recipe = {}
+	local me
 	do
 		local fusion = chosen_fusion
 		local found_me = false
-		for _, joker in ipairs(fusion.jokers) do
-			if fusion.jokers[1].name == fusion.jokers[2].name then
-				if #SMODS.find_card(joker.name) > 1 and #joker_pos == 0 then
-					local first_pos = has_joker(joker.name)
-					table.insert(joker_pos, {pos = first_pos, joker = joker})
-					table.insert(joker_pos, {pos = has_joker(joker.name, first_pos), joker = joker})
-				end
-			elseif next(SMODS.find_card(joker.name)) then
-				table.insert(joker_pos, {pos = has_joker(joker.name), joker = joker})
-			end
-			if joker.name == self.config.center_key then
+		local list = {}
+		for i,component in ipairs(fusion.jokers) do
+			if component.name == self.config.center_key and not found_me then
+				recipe[#recipe+1] = self
 				found_me = true
+				self.fused = true
+				if component.carry_stat then
+					carried_stats[component.carry_stat] = (carried_stats[component.carry_stat] or 0) + (type(self.ability.extra) == "table" and self.ability.extra[component.carry_stat] or self.ability[component.carry_stat] or 0)
+				end
+			else
+				local found_it = false
+				for ii,vv in ipairs(G.jokers.highlighted) do
+					if vv.config.center_key == component.name and not vv.fused then
+						recipe[#recipe+1] = vv
+						vv.fused = true
+						found_it = true
+						if component.carry_stat then
+							carried_stats[component.carry_stat] = (carried_stats[component.carry_stat] or 0) + (type(vv.ability.extra) == "table" and vv.ability.extra[component.carry_stat] or vv.ability[component.carry_stat] or 0)
+						end
+						if component.merge_stat then
+							merged_stat = merged_stat + (type(vv.ability.extra) == "table" and vv.ability.extra[component.merge_stat] or vv.ability[component.merge_stat])
+						end
+						break
+					end
+				end
+				if not found_it then
+					for ii,vv in ipairs(G.jokers.cards) do
+						if vv.config.center_key == component.name and not vv.fused then
+							recipe[#recipe+1] = vv
+							vv.fused = true
+							found_it = true
+							if component.carry_stat then
+								carried_stats[component.carry_stat] = (carried_stats[component.carry_stat] or 0) + (type(vv.ability.extra) == "table" and vv.ability.extra[component.carry_stat] or vv.ability[component.carry_stat] or 0)
+							end
+							if component.merge_stat then
+								merged_stat = merged_stat + (type(vv.ability.extra) == "table" and vv.ability.extra[component.merge_stat] or vv.ability[component.merge_stat])
+							end
+							break
+						end
+					end
+				end
+				if not found_it then
+					dprint("Failed to find component Jokers when fusing?")
+					chosen_fusion = nil
+				end
 			end
 		end
 
-		if not (#joker_pos == #fusion.jokers and found_me) then
+		if not (#recipe == #fusion.jokers and found_me) then
 			dprint("Failed to find component Jokers when fusing?")
 			chosen_fusion = nil
 		end
@@ -372,28 +463,28 @@ function Card:fuse_card(debug)
 	if chosen_fusion ~= nil then
 		G.E_MANAGER:add_event(Event({trigger = 'after', delay = 0.2,func = function()
 			play_sound('whoosh1')
-			for _, pos in ipairs(joker_pos) do
-				if not edition and G.jokers.cards[pos.pos].edition then
-					edition = G.jokers.cards[pos.pos].edition
+			for i,v in ipairs(recipe) do
+				if not edition and v.edition then
+					edition = v.edition
 				end
-				G.jokers.cards[pos.pos]:juice_up(0.3, 0.4)
+				v:juice_up(0.3, 0.4)
 			end
 			return true
 		end}))
 		delay(0.2)
 		G.E_MANAGER:add_event(Event({trigger = 'immediate',func = function()
 			ease_dollars(-chosen_fusion.cost)
-			local j_fusion = SMODS.create_card({set = "Joker", area = G.jokers, key = chosen_fusion.result_joker, edition = edition})
-			table.sort(joker_pos, function (a, b)
-				return a.pos > b.pos
-			end)
-			for index, pos in ipairs(joker_pos) do
-				local isPrimary = false
-				if G.jokers.cards[pos.pos] == self then
-					isPrimary = true
-				end
+			local j_fusion = self
+
+			self:set_ability(chosen_fusion.result_joker)
+			if edition and not self.edition then
+				self:set_edition(edition.key)
+			end
+			SMODS.calculate_context{fusing_jokers = true, fusion_components = recipe, fusion_result = j_fusion}
+			for index, ingredient in ipairs(recipe) do
+				local isPrimary = ingredient == self
 				for k,_ in pairs(SMODS.Stickers) do
-					if G.jokers.cards[pos.pos].ability[k] then
+					if ingredient.ability[k] then
 						-- if string.find(k, "gemslot") then
 						-- 	local gemExists = false
 						-- 	for k1, _ in pairs(j_fusion.ability) do
@@ -409,43 +500,35 @@ function Card:fuse_card(debug)
 						--end
 					end
 				end
-				local check_joker = pos.joker
-				if check_joker.carry_stat then
-					dprint("There is a carry stat")
-					if check_joker.extra_stat then
-						j_fusion.ability.extra[check_joker.carry_stat] = G.jokers.cards[pos.pos].ability.extra[check_joker.carry_stat]
-						dprint("It is extra; its value is "..tostring(G.jokers.cards[pos.pos].ability.extra[check_joker.carry_stat]))
-					else
-						j_fusion.ability[check_joker.carry_stat] = G.jokers.cards[pos.pos].ability[check_joker.carry_stat]
-						dprint("It is not extra; its value is "..tostring(G.jokers.cards[pos.pos].ability[check_joker.carry_stat]))
-					end
-				else
-					dprint("There is not a carry stat")
-				end
-				if check_joker.merge_stat then
-					if chosen_fusion.merge_extra then
-						if check_joker.extra_stat then
-							j_fusion.ability.extra[chosen_fusion.merged_stat] = j_fusion.ability.extra[chosen_fusion.merged_stat] + G.jokers.cards[pos.pos].ability.extra[check_joker.merge_stat]
-						else
-							j_fusion.ability.extra[chosen_fusion.merged_stat] = j_fusion.ability.extra[chosen_fusion.merged_stat] + G.jokers.cards[pos.pos].ability[check_joker.merge_stat]
-						end
-					else
-						if check_joker.extra_stat then
-							j_fusion.ability[chosen_fusion.merged_stat] = j_fusion.ability[chosen_fusion.merged_stat] + G.jokers.cards[pos.pos].ability.extra[check_joker.merge_stat]
-						else
-							j_fusion.ability[chosen_fusion.merged_stat] = j_fusion.ability[chosen_fusion.merged_stat] + G.jokers.cards[pos.pos].ability[check_joker.merge_stat]
-						end
-					end
-				end
 				--G.jokers.cards[pos]:start_dissolve({G.C.GOLD})
-				G.jokers.cards[pos.pos].fused = true --Check for this if your on-card-removal function has an opinion on whether being fused counts as removal.
-				G.jokers.cards[pos.pos]:remove()
+
+				local flags = SMODS.calculate_context({joker_type_destroyed = true, card = ingredient})
+				if not (flags.no_destroy or isPrimary) then
+					ingredient:remove()
+				else
+					ingredient.fused = nil
+				end
+			end
+
+			if next(carried_stats) then
+				if type(self.ability.extra) == "number" then
+					local num = self.ability.extra
+					self.ability.extra = {
+						extra = num
+					}
+				elseif type(self.ability.extra) ~= "table" then
+					self.ability.extra = {}
+				end
+				for k,v in pairs(carried_stats) do
+					self.ability.extra[k] = v
+				end
+			end
+			if chosen_fusion.merged_stat then
+				self.ability.extra[chosen_fusion.merged_stat] = merged_stat
 			end
 
 			delay(0.3)
 
-			j_fusion:add_to_deck()
-			G.jokers:emplace(j_fusion)
 			play_sound('explosion_release1')
 			G.jokers:unhighlight_all()
 
@@ -466,6 +549,17 @@ function Card:fuse_card(debug)
 			end}))
 			return true
 		end}))
+
+		if type(chosen_fusion.aftermath) == "function" then	
+			G.E_MANAGER:add_event(Event({func = function ()
+				chosen_fusion.aftermath()
+				return true
+			end}))
+		end
+	else
+		for i,v in ipairs(recipe) do --Shouldn't happen, but don't leave the fused flag lying around if it does
+			v.fused = nil
+		end
 	end
 
 	G.CONTROLLER.locks.selling_card = nil
@@ -518,26 +612,6 @@ function G.UIDEF.use_and_sell_buttons(card)
 	return retval
 end
 
-
-local card_h_popupref = G.UIDEF.card_h_popup
-function G.UIDEF.card_h_popup(card)
-    local retval = card_h_popupref(card)
-    if not card.config.center or -- no center
-	(card.config.center.unlocked == false and not card.bypass_lock) or -- locked card
-	card.debuff or -- debuffed card
-	(not card.config.center.discovered and ((card.area ~= G.jokers and card.area ~= G.consumeables and card.area) or not card.area)) -- undiscovered card
-	then return retval end
-
-	if card.config.center.rarity == 5 then
-		retval.nodes[1].nodes[1].nodes[1].nodes[3].nodes[1].nodes[1].nodes[2].config.object:remove()
-		retval.nodes[1].nodes[1].nodes[1].nodes[3].nodes[1] = create_badge(localize('k_fusion'), loc_colour("fusion", nil), nil, 1.2)
-	end
-
-	return retval
-end
-
-
-
 local updateref = Card.update
 function Card:update(dt)
   updateref(self, dt)
@@ -562,6 +636,8 @@ function Card:update(dt)
 		if not fuseable and self.ability.fusion.jiggle then
 			self.ability.fusion.jiggle = false
 		end
+	else
+		self.ability.fusion, self.fusion_cost = nil, nil
 	end
   end
 end
